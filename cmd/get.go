@@ -60,32 +60,14 @@ func init() {
 
 }
 
-func download(surveys []string, path string) {
-
-	if !verifyTarget(path) {
+func download(surveys []string, targetPath string) {
+	if !verifyTarget(targetPath) {
 		fmt.Printf("Quitting.")
 		return
 	}
 
 	if bathy {
-		fmt.Println("resolving bathymetry data for provided surveys: ", surveys)
-		var surveyRoots []string = resolveBathySurveys(surveys)
-
-		if len(surveyRoots) == 0 {
-			fmt.Println("No surveys found.")
-			return
-		} else {
-			fmt.Printf("Found %d surveys: %s\n", len(surveyRoots), surveyRoots)
-			// TODO additional verification of survey match results
-		}
-
-		fmt.Println("checking available disk space")
-		diskSpaceCheck(surveyRoots)
-
-		fmt.Println("downloading surveys ", surveys, " to ", path, "...")
-		// TODO recursively download surveys
-
-		fmt.Println("bathymetry data downloaded.")
+		downloadBathySurveys(surveys, targetPath)
 	}
 
 	if wcd {
@@ -139,28 +121,54 @@ func verifyTarget(path string) bool {
 	}
 }
 
-func diskSpaceCheck(rootPaths []string) {
-	// TODO
+func diskSpaceCheck(rootPaths []string, targetPath string) bool {
+
+	return false
 }
 
-func resolveBathySurveys(inputSurveys []string) []string {
-	var surveyPaths []string
-	wantedSurveys := len(inputSurveys)
-	foundSurveys := 0
-
+func downloadBathySurveys(surveys []string, targetPath string) {
 	cfg, err := config.LoadDefaultConfig(context.TODO(),
 		config.WithCredentialsProvider(aws.AnonymousCredentials{}),
 		config.WithRegion("us-east-1"),
 	)
 	if err != nil {
-		log.Fatal(err)
-		return surveyPaths
+		fmt.Printf("Error loading AWS config: %s\n", err)
+		fmt.Println("Failed to download bathy surveys.")
+		return
 	}
 
 	client := s3.NewFromConfig(cfg)
 
 	// noaa-dcdb-bathymetry-pds.s3.amazonaws.com/index.html
 	bucket := "noaa-dcdb-bathymetry-pds"
+
+	fmt.Println("resolving bathymetry data for provided surveys: ", surveys)
+	var surveyRoots []string = resolveBathySurveys(surveys, *client, bucket)
+
+	if len(surveyRoots) == 0 {
+		fmt.Println("No surveys found.")
+		return
+	} else {
+		fmt.Printf("Found %d of %d wanted surveys at: %s\n", len(surveyRoots), len(surveys), surveyRoots)
+		// TODO additional verification of survey match results
+	}
+
+	fmt.Println("checking available disk space")
+	if !diskSpaceCheck(surveyRoots, targetPath) {
+		fmt.Println("Specified path does not have enough disk space available.")
+		return
+	}
+
+	fmt.Println("downloading surveys ", surveys, " to ", targetPath)
+	// TODO recursively download surveys
+
+	fmt.Println("bathymetry data downloaded.")
+}
+
+func resolveBathySurveys(inputSurveys []string, client s3.Client, bucket string) []string {
+	var surveyPaths []string
+	wantedSurveys := len(inputSurveys)
+	foundSurveys := 0
 
 	pt, ptErr := client.ListObjectsV2(context.TODO(), &s3.ListObjectsV2Input{
 		Bucket:    aws.String(bucket),
@@ -169,7 +177,7 @@ func resolveBathySurveys(inputSurveys []string) []string {
 	})
 
 	if ptErr != nil {
-		log.Fatal(err)
+		log.Fatal(ptErr)
 		return surveyPaths
 	}
 
@@ -181,13 +189,13 @@ func resolveBathySurveys(inputSurveys []string) []string {
 			Delimiter: aws.String("/"),
 		}
 
-		allPlatforms := s3.NewListObjectsV2Paginator(client, platformParams)
+		allPlatforms := s3.NewListObjectsV2Paginator(&client, platformParams)
 
 		for allPlatforms.HasMorePages() {
 			platsPage, platsErr := allPlatforms.NextPage(context.TODO())
 
 			if platsErr != nil {
-				log.Fatal(err)
+				log.Fatal(platsErr)
 				return []string{}
 			}
 			for _, platform := range platsPage.CommonPrefixes {
@@ -199,7 +207,7 @@ func resolveBathySurveys(inputSurveys []string) []string {
 					Delimiter: aws.String("/"),
 				}
 
-				platformPaginator := s3.NewListObjectsV2Paginator(client, platformParams)
+				platformPaginator := s3.NewListObjectsV2Paginator(&client, platformParams)
 
 				for platformPaginator.HasMorePages() {
 					surveysPage, err := platformPaginator.NextPage(context.TODO())
