@@ -2,12 +2,14 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/spf13/cobra"
 	"log"
+	"os"
 	"path"
 	"strings"
 )
@@ -26,7 +28,6 @@ var getCmd = &cobra.Command{
 		the survey(s) you want to download and a local path to download data to. The path must exist and 
 		have the necessary permissions.`,
 	Run: func(cmd *cobra.Command, args []string) {
-
 		var length = len(args)
 		if length <= 1 {
 			fmt.Println("Please specify survey name(s) and a target file path.")
@@ -35,7 +36,7 @@ var getCmd = &cobra.Command{
 		}
 
 		var path = args[length-1]
-		var surveys = args[:length-1] // high is non-inclusive
+		var surveys = args[:length-1]
 
 		if !bathy && !wcd && !trackline {
 			fmt.Println("Please specify data type(s) for download.")
@@ -60,6 +61,11 @@ func init() {
 }
 
 func download(surveys []string, path string) {
+
+	if !verifyTarget(path) {
+		fmt.Printf("Quitting.")
+		return
+	}
 
 	if bathy {
 		fmt.Println("resolving bathymetry data for provided surveys: ", surveys)
@@ -91,6 +97,46 @@ func download(surveys []string, path string) {
 	}
 
 	return
+}
+
+func verifyTarget(path string) bool {
+	fileInfo, err := os.Stat(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			fmt.Printf("Target download path %s does not exist.\n", path)
+			return false
+		}
+
+		fmt.Printf("Error validating target path %s: %s\n", path, err)
+		return false
+	}
+
+	if fileInfo.IsDir() {
+		return true
+	} else {
+		fmt.Printf("%s is not a directory!\n", path)
+	}
+
+	mode := fileInfo.Mode()
+
+	// Check for user read permission (0400) and user write permission (0200)
+	userCanRead := mode&0400 != 0
+	userCanWrite := mode&0200 != 0
+
+	if userCanRead && userCanWrite {
+		return true
+	}
+
+	if !userCanRead && !userCanWrite {
+		fmt.Printf("user lacks both read and write permissions for: %s", path)
+		return false
+	} else if !userCanRead {
+		fmt.Printf("user lacks read permission for: %s", path)
+		return false
+	} else {
+		fmt.Printf("user lacks write permission for: %s", path)
+		return false
+	}
 }
 
 func diskSpaceCheck(rootPaths []string) {
