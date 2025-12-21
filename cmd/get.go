@@ -63,6 +63,11 @@ func download(surveys []string, path string) {
 		fmt.Println("resolving bathymetry data for provided surveys: ", surveys)
 		var surveyRoots []string = resolveBathySurveys(surveys)
 
+		if len(surveyRoots) == 0 {
+			fmt.Println("No surveys found.")
+			return
+		}
+
 		fmt.Println("checking available disk space")
 		diskSpaceCheck(surveyRoots)
 
