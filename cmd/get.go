@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/ricochet2200/go-disk-usage/du"
 	"github.com/spf13/cobra"
@@ -72,12 +73,10 @@ func download(surveys []string, targetPath string) {
 	}
 
 	if wcd {
-		// TODO
-	}
+	} // TODO
 
 	if trackline {
-		// TODO
-	}
+	} // TODO
 
 	return
 }
@@ -135,6 +134,7 @@ func diskSpaceCheck(rootPaths []string, targetPath string, client s3.Client, buc
 	availableSpace := getAvailableDiskSpace(targetPath)
 
 	for _, surveyRootPath := range rootPaths {
+		// TODO paginate
 		result, err := client.ListObjectsV2(context.TODO(), &s3.ListObjectsV2Input{
 			Bucket: aws.String(bucket),
 			Prefix: aws.String(surveyRootPath),
@@ -200,10 +200,59 @@ func downloadBathySurveys(surveys []string, targetPath string) {
 		return
 	}
 
-	fmt.Println("Downloading surveys ", surveys, " to ", targetPath)
-	// TODO recursively download surveys
+	fmt.Println("Downloading survey files to ", targetPath)
+	downloadFiles(surveyRoots, targetPath, bucket, *client)
 
 	fmt.Println("bathymetry data downloaded.")
+}
+
+func downloadFiles(prefixes []string, targetDir string, bucket string, client s3.Client) {
+	for _, survey := range prefixes {
+		params := &s3.ListObjectsV2Input{
+			Bucket: aws.String(bucket),
+			Prefix: aws.String(survey),
+		}
+
+		filePaginator := s3.NewListObjectsV2Paginator(&client, params)
+		for filePaginator.HasMorePages() {
+			page, err := filePaginator.NextPage(context.TODO())
+			if err != nil {
+				log.Fatal(err)
+				return
+			}
+
+			for _, object := range page.Contents {
+				filename := path.Join(targetDir, path.Base(*object.Key))
+				DownloadLargeObject(bucket, *object.Key, client, filename)
+			}
+
+		}
+	}
+}
+
+func DownloadLargeObject(bucketName string, objectKey string, client s3.Client, targetFile string) {
+	downloader := manager.NewDownloader(&client)
+
+	file, err := os.Create(targetFile)
+	if err != nil {
+		fmt.Printf("Unable to create local file %s", targetFile)
+		return
+	}
+	defer file.Close()
+
+	n, err := downloader.Download(context.TODO(), file, &s3.GetObjectInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String(objectKey),
+	})
+
+	if err != nil {
+		fmt.Printf("failed to download file: %w", err)
+		return
+	}
+
+	fmt.Printf("Successfully downloaded %d bytes to %s\n", n, targetFile)
+	return
+
 }
 
 func resolveBathySurveys(inputSurveys []string, client s3.Client, bucket string) []string {
