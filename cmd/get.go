@@ -7,6 +7,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/ricochet2200/go-disk-usage/du"
 	"github.com/spf13/cobra"
 	"log"
 	"os"
@@ -121,7 +122,46 @@ func verifyTarget(path string) bool {
 	}
 }
 
-func diskSpaceCheck(rootPaths []string, targetPath string) bool {
+func getAvailableDiskSpace(localPath string) uint64 {
+	usage := du.NewDiskUsage(localPath)
+	if usage == nil {
+		log.Fatalf("Could not get disk usage for path: %s", localPath)
+	}
+	return usage.Available() // bytes
+}
+
+func diskSpaceCheck(rootPaths []string, targetPath string, client s3.Client, bucket string) bool {
+	var totalSurveysSize int64 = 0
+	availableSpace := getAvailableDiskSpace(targetPath)
+
+	for _, surveyRootPath := range rootPaths {
+		result, err := client.ListObjectsV2(context.TODO(), &s3.ListObjectsV2Input{
+			Bucket: aws.String(bucket),
+			Prefix: aws.String(surveyRootPath),
+		})
+
+		if err != nil {
+			log.Fatal(err)
+			return false
+		}
+
+		for _, object := range result.Contents {
+			//log.Printf("key=%s size=%d", aws.ToString(object.Key), *object.Size)
+			totalSurveysSize = totalSurveysSize + *object.Size
+		}
+	}
+
+	if totalSurveysSize < 0 {
+		totalSurveysSize = 0
+	}
+
+	fmt.Printf("  total download size: %fGB\n", float64(totalSurveysSize)/(1024*1024*1024))
+	fmt.Printf("  disk space available: %fGB\n", float64(availableSpace)/(1024*1024*1024))
+
+	if availableSpace > uint64(totalSurveysSize) {
+		fmt.Println("  continuing...")
+		return true
+	}
 
 	return false
 }
@@ -131,6 +171,7 @@ func downloadBathySurveys(surveys []string, targetPath string) {
 		config.WithCredentialsProvider(aws.AnonymousCredentials{}),
 		config.WithRegion("us-east-1"),
 	)
+
 	if err != nil {
 		fmt.Printf("Error loading AWS config: %s\n", err)
 		fmt.Println("Failed to download bathy surveys.")
@@ -142,8 +183,8 @@ func downloadBathySurveys(surveys []string, targetPath string) {
 	// noaa-dcdb-bathymetry-pds.s3.amazonaws.com/index.html
 	bucket := "noaa-dcdb-bathymetry-pds"
 
-	fmt.Println("resolving bathymetry data for provided surveys: ", surveys)
-	var surveyRoots []string = resolveBathySurveys(surveys, *client, bucket)
+	fmt.Println("Resolving bathymetry data for specified surveys: ", surveys)
+	var surveyRoots = resolveBathySurveys(surveys, *client, bucket)
 
 	if len(surveyRoots) == 0 {
 		fmt.Println("No surveys found.")
@@ -153,13 +194,13 @@ func downloadBathySurveys(surveys []string, targetPath string) {
 		// TODO additional verification of survey match results
 	}
 
-	fmt.Println("checking available disk space")
-	if !diskSpaceCheck(surveyRoots, targetPath) {
+	fmt.Println("Checking available disk space")
+	if !diskSpaceCheck(surveyRoots, targetPath, *client, bucket) {
 		fmt.Println("Specified path does not have enough disk space available.")
 		return
 	}
 
-	fmt.Println("downloading surveys ", surveys, " to ", targetPath)
+	fmt.Println("Downloading surveys ", surveys, " to ", targetPath)
 	// TODO recursively download surveys
 
 	fmt.Println("bathymetry data downloaded.")
@@ -232,10 +273,6 @@ func resolveBathySurveys(inputSurveys []string, client s3.Client, bucket string)
 			}
 		}
 	}
-
-	//for _, object := range result.Contents {
-	//	log.Printf("key=%s size=%d", aws.ToString(object.Key), *object.Size)
-	//}
 
 	return surveyPaths
 }
