@@ -5,8 +5,7 @@ package main
 
 import (
 	"github.com/max-e-smith/cruise-lug/cmd"
-	_ "github.com/max-e-smith/cruise-lug/cmd/get"
-	_ "github.com/max-e-smith/cruise-lug/cmd/get/cruise"
+	_ "github.com/max-e-smith/cruise-lug/cmd/gets"
 )
 
 func main() {

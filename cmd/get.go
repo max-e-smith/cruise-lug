@@ -1,7 +1,6 @@
-package get
+package cmd
 
 import (
-	"github.com/max-e-smith/cruise-lug/cmd"
 	"github.com/spf13/cobra"
 )
 
@@ -20,5 +19,5 @@ var GetCmd = &cobra.Command{
 }
 
 func init() {
-	cmd.rootCmd.AddCommand(GetCmd)
+	rootCmd.AddCommand(GetCmd)
 }

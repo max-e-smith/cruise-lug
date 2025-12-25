@@ -1,4 +1,4 @@
-package cruise
+package get
 
 import (
 	"context"
@@ -6,9 +6,9 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/max-e-smith/cruise-lug/cmd"
 	"github.com/max-e-smith/cruise-lug/cmd/common"
-	"github.com/max-e-smith/cruise-lug/cmd/get"
-	"github.com/max-e-smith/cruise-lug/cmd/get/cruise/dcdb"
+	"github.com/max-e-smith/cruise-lug/cmd/gets/dcdb"
 	"github.com/spf13/cobra"
 	"log"
 	"path"
@@ -58,7 +58,7 @@ var cruiseCmd = &cobra.Command{
 }
 
 func init() {
-	get.GetCmd.AddCommand(cruiseCmd)
+	cmd.GetCmd.AddCommand(cruiseCmd)
 
 	// Here you will define your flags and configuration settings.
 
