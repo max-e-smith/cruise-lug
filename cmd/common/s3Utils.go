@@ -15,13 +15,15 @@ import (
 func GetDiskUsageEstimate(bucket string, s3client s3.Client, rootPaths []string) (int64, error) {
 	var totalSurveysSize int64 = 0
 
+	fmt.Printf("Getting disk usage estimate from s3 bucket: %s\n", bucket)
+	fmt.Printf("Getting disk usage estimate for root paths: %s\n", rootPaths)
 	for _, surveyRootPath := range rootPaths {
+		fmt.Printf("Getting disk usage estimate for %s\n", surveyRootPath)
 		// TODO paginate
 		result, err := s3client.ListObjectsV2(context.TODO(), &s3.ListObjectsV2Input{
 			Bucket: aws.String(bucket),
 			Prefix: aws.String(surveyRootPath),
 		})
-
 		if err != nil {
 			return totalSurveysSize, err
 		}
@@ -35,7 +37,7 @@ func GetDiskUsageEstimate(bucket string, s3client s3.Client, rootPaths []string)
 	return totalSurveysSize, nil
 }
 
-type DownloadOrder struct {
+type Order struct {
 	Bucket      string
 	Prefixes    []string
 	Client      s3.Client
@@ -43,7 +45,7 @@ type DownloadOrder struct {
 	WorkerCount int
 }
 
-func (manifest DownloadOrder) DownloadFiles() {
+func (manifest Order) DownloadFiles() error {
 	fmt.Printf("Downloading files to %s...\n", manifest.TargetDir)
 	for _, survey := range manifest.Prefixes {
 		var fileDownloadPageSize int32 = 10
@@ -58,8 +60,7 @@ func (manifest DownloadOrder) DownloadFiles() {
 		for filePaginator.HasMorePages() {
 			page, err := filePaginator.NextPage(context.TODO())
 			if err != nil {
-				log.Fatal(err)
-				return
+				return err
 			}
 
 			var wg sync.WaitGroup
@@ -71,10 +72,12 @@ func (manifest DownloadOrder) DownloadFiles() {
 		}
 		fmt.Println("files downloaded.")
 	}
+	return nil
 }
 
 func downloadLargeObject(bucket string, objectKey string, client s3.Client, targetFile string, wg *sync.WaitGroup) {
 	defer wg.Done()
+	//fmt.Printf("Downloading %s to %s...\n", objectKey, bucket)
 
 	file, err := createFileWithParents(targetFile)
 	if err != nil {

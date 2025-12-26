@@ -20,6 +20,12 @@ var trackline bool
 
 var s3client s3.Client
 
+type CruiseRequest interface {
+	ResolveSurveys() ([]string, error)
+	CheckDiskAvailability() error
+	DownloadSurveys() error
+}
+
 var cruiseCmd = &cobra.Command{
 	Use:   "cruise",
 	Short: "Download NOAA survey data to local path",
@@ -32,38 +38,27 @@ var cruiseCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		targetPath, surveys, argsErr := getArgs(args)
 		if argsErr != nil {
-			fmt.Println(argsErr)
-			fmt.Println(cmd.UsageString())
+			usageError(cmd, argsErr)
 			return
 		}
 
 		err := verifyUsage(targetPath)
 		if err != nil {
-			fmt.Println(err)
-			fmt.Println(cmd.UsageString())
+			usageError(cmd, err)
 			return
 		}
 
 		if multibeam {
-			surveys, resolveErr := dcdb.ResolveMultibeamSurveys(surveys, s3client)
-			if resolveErr != nil {
-				fmt.Println(resolveErr)
-				return
+			request := dcdb.MultibeamRequest{
+				Surveys:     surveys,
+				S3Client:    s3client,
+				TargetDir:   targetPath,
+				WorkerCount: 0,
 			}
-
-			bytes, estimateErr := common.GetDiskUsageEstimate(dcdb.Bucket, s3client, surveys)
-			if estimateErr != nil {
+			if err := requestMultibeamDownload(request); err != nil {
 				fmt.Println(err)
 				return
 			}
-
-			spaceErr := diskSpaceCheck(bytes, targetPath)
-			if spaceErr != nil {
-				fmt.Println("Specified path does not have enough disk space available.")
-				return
-			}
-
-			dcdb.DownloadBathySurveys(surveys, targetPath, s3client)
 		}
 
 		if crowdsourced {
@@ -76,7 +71,6 @@ var cruiseCmd = &cobra.Command{
 		} // TODO
 
 		fmt.Println("Done.")
-
 		return
 	},
 }
@@ -103,10 +97,15 @@ func init() {
 	s3client = *s3.NewFromConfig(cfg)
 }
 
+func usageError(cmd *cobra.Command, err error) {
+	fmt.Println(err)
+	fmt.Println(cmd.UsageString())
+}
+
 func getArgs(args []string) (string, []string, error) {
 	var length = len(args)
 	if length <= 1 {
-		return "", nil, errors.New("Please specify survey name(s) and a target file path.")
+		return "", nil, errors.New("please specify survey name(s) and a target file path")
 	}
 
 	var targetPath = args[length-1]
@@ -127,20 +126,16 @@ func verifyUsage(targetPath string) error {
 	return nil
 }
 
-func diskSpaceCheck(surveyBytes int64, targetPath string) error {
-	fmt.Println("Checking available disk space")
-	if surveyBytes < 0 {
-		surveyBytes = 0
+func requestMultibeamDownload(request dcdb.MultibeamRequest) error {
+	if surveys, resolveErr := request.ResolveSurveys(); resolveErr != nil {
+		return resolveErr
+	} else {
+		request.Prefixes = surveys
 	}
 
-	availableSpace := common.GetAvailableDiskSpace(targetPath)
-
-	fmt.Printf("  total download size: %gGB\n", common.ByteToGB(surveyBytes))
-	fmt.Printf("  disk space available: %gGB\n", common.ByteToGB(int64(availableSpace)))
-
-	if availableSpace > uint64(surveyBytes) {
-		return nil
+	if spaceErr := request.CheckDiskAvailability(); spaceErr != nil {
+		return spaceErr
 	}
 
-	return fmt.Errorf("not enough available space")
+	return request.DownloadSurveys()
 }

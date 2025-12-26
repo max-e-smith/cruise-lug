@@ -14,32 +14,31 @@ import (
 
 var Bucket = "noaa-dcdb-bathymetry-pds" // https://noaa-dcdb-bathymetry-pds.s3.amazonaws.com/index.html
 
+type MultibeamRequest struct {
+	Surveys     []string
+	Prefixes    []string
+	S3Client    s3.Client
+	TargetDir   string
+	WorkerCount int
+}
+
 func logDownloadTime(start time.Time) {
 	fmt.Printf("Download completed in %g hours.\n", common.HoursSince(start))
 }
 
-func DownloadBathySurveys(surveys []string, targetPath string, s3client s3.Client) {
-	start := time.Now()
-	defer logDownloadTime(start)
-
-	order := common.DownloadOrder{Bucket: Bucket, Prefixes: surveys, Client: s3client, TargetDir: targetPath, WorkerCount: 5}
-	order.DownloadFiles()
-}
-
-func ResolveMultibeamSurveys(inputSurveys []string, s3client s3.Client) ([]string, error) {
-	fmt.Println("Resolving bathymetry data for specified surveys: ", inputSurveys)
+func (request MultibeamRequest) ResolveSurveys() ([]string, error) {
+	fmt.Println("Resolving bathymetry data for specified surveys: ", request.Surveys)
 	var surveyPaths []string
-	wantedSurveys := len(inputSurveys)
+	wantedSurveys := len(request.Surveys)
 	foundSurveys := 0
 
-	pt, ptErr := s3client.ListObjectsV2(context.TODO(), &s3.ListObjectsV2Input{
+	pt, ptErr := request.S3Client.ListObjectsV2(context.TODO(), &s3.ListObjectsV2Input{
 		Bucket:    aws.String(Bucket),
 		Prefix:    aws.String("mb/"),
 		Delimiter: aws.String("/"),
 	})
 
 	if ptErr != nil {
-		log.Fatal(ptErr)
 		return surveyPaths, ptErr
 	}
 
@@ -51,14 +50,14 @@ func ResolveMultibeamSurveys(inputSurveys []string, s3client s3.Client) ([]strin
 			Delimiter: aws.String("/"),
 		}
 
-		allPlatforms := s3.NewListObjectsV2Paginator(&s3client, platformParams)
+		allPlatforms := s3.NewListObjectsV2Paginator(&request.S3Client, platformParams)
 
 		for allPlatforms.HasMorePages() {
 			platsPage, platsErr := allPlatforms.NextPage(context.TODO())
 
 			if platsErr != nil {
 				log.Fatal(platsErr)
-				return []string{}, platsErr
+				return surveyPaths, platsErr
 			}
 			for _, platform := range platsPage.CommonPrefixes {
 				fmt.Printf("  searching %s\n", *platform.Prefix)
@@ -69,19 +68,18 @@ func ResolveMultibeamSurveys(inputSurveys []string, s3client s3.Client) ([]strin
 					Delimiter: aws.String("/"),
 				}
 
-				platformPaginator := s3.NewListObjectsV2Paginator(&s3client, platformParams)
+				platformPaginator := s3.NewListObjectsV2Paginator(&request.S3Client, platformParams)
 
 				for platformPaginator.HasMorePages() {
 					surveysPage, err := platformPaginator.NextPage(context.TODO())
 					if err != nil {
-						log.Fatal(err)
-						return []string{}, err
+						return surveyPaths, err
 					}
 
 					for _, survey := range surveysPage.CommonPrefixes {
 						surveyPrefix := *survey.Prefix
 						survey := path.Base(strings.TrimRight(surveyPrefix, "/"))
-						if isSurveyMatch(inputSurveys, survey) {
+						if isSurveyMatch(request.Surveys, survey) {
 							surveyPaths = append(surveyPaths, surveyPrefix)
 							foundSurveys++
 						}
@@ -90,6 +88,8 @@ func ResolveMultibeamSurveys(inputSurveys []string, s3client s3.Client) ([]strin
 				}
 				if wantedSurveys == foundSurveys {
 					// short circuit when enough surveys are found
+					fmt.Printf("setting request prefixes to found surveys: %s\n", strings.Join(surveyPaths, ","))
+					request.Prefixes = surveyPaths
 					return surveyPaths, nil
 				}
 			}
@@ -97,13 +97,36 @@ func ResolveMultibeamSurveys(inputSurveys []string, s3client s3.Client) ([]strin
 	}
 
 	if len(surveyPaths) == 0 {
-		return nil, fmt.Errorf("no surveys found")
+		return surveyPaths, fmt.Errorf("no surveys found")
 	} else {
-
 		// TODO additional verification of survey match results
 	}
-	fmt.Printf("Found %d of %d wanted surveys at: %s\n", len(surveyPaths), len(inputSurveys), surveyPaths)
+	fmt.Printf("Found %d of %d wanted surveys at: %s\n", len(surveyPaths), len(request.Surveys), surveyPaths)
+	request.Prefixes = surveyPaths
 	return surveyPaths, nil
+}
+
+func (request MultibeamRequest) CheckDiskAvailability() error {
+	bytes, estimateErr := common.GetDiskUsageEstimate(Bucket, request.S3Client, request.Prefixes)
+	if estimateErr != nil {
+		return fmt.Errorf("unable to get disk usage estimate from s3 bucket: %w", estimateErr)
+	}
+
+	return common.DiskSpaceCheck(bytes, request.TargetDir)
+}
+
+func (request MultibeamRequest) DownloadSurveys() error {
+	start := time.Now()
+	defer logDownloadTime(start)
+
+	order := common.Order{
+		Bucket:      Bucket,
+		Prefixes:    request.Prefixes,
+		Client:      request.S3Client,
+		TargetDir:   request.TargetDir,
+		WorkerCount: request.WorkerCount,
+	}
+	return order.DownloadFiles()
 }
 
 func isSurveyMatch(surveys []string, resolvedSurvey string) bool {
