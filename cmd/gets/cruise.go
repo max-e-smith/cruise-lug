@@ -31,26 +31,17 @@ var cruiseCmd = &cobra.Command{
 		the survey(s) you want to download and a local path to download data to. The path must exist and 
 		have the necessary permissions.`,
 	Run: func(cmd *cobra.Command, args []string) {
-		targetPath, surveys, argsErr := getArgs(args)
-		if argsErr != nil {
-			usageError(cmd, argsErr)
-			return
-		}
-
-		err := verifyUsage(targetPath)
-		if err != nil {
-			usageError(cmd, err)
-			return
-		}
+		targetPath, surveys := parseArgs(cmd, args)
 
 		if multibeam {
-			request := dcdb.MultibeamRequest{
-				Surveys:     surveys,
-				S3Client:    s3client,
-				TargetDir:   targetPath,
-				WorkerCount: 0,
-			}
-			requestMultibeamDownload(request)
+			requestMultibeamDownload(
+				dcdb.MultibeamRequest{
+					Surveys:     surveys,
+					S3Client:    s3client,
+					TargetDir:   targetPath,
+					WorkerCount: 0,
+				},
+			)
 		}
 
 		if crowdsourced {
@@ -89,33 +80,30 @@ func init() {
 	s3client = *s3.NewFromConfig(cfg)
 }
 
-func usageError(cmd *cobra.Command, err error) {
-	fmt.Println(err)
-	fmt.Println(cmd.UsageString())
-}
-
-func getArgs(args []string) (string, []string, error) {
+func parseArgs(cmd *cobra.Command, args []string) (string, []string) {
 	var length = len(args)
 	if length <= 1 {
-		return "", nil, errors.New("please specify survey name(s) and a target file path")
+		usageError(cmd, errors.New("please specify survey name(s) and a target file path"))
+	}
+
+	if !multibeam && !wcd && !trackline {
+		usageError(cmd, errors.New("please specify data type(s) for download"))
 	}
 
 	var targetPath = args[length-1]
 	var surveys = args[:length-1]
 
-	return targetPath, surveys, nil
-}
-
-func verifyUsage(targetPath string) error {
-	if !multibeam && !wcd && !trackline {
-		return fmt.Errorf("please specify data type(s) for download")
-	}
-
 	targetError := common.VerifyTarget(targetPath)
 	if targetError != nil {
-		return targetError
+		usageError(cmd, targetError)
 	}
-	return nil
+
+	return targetPath, surveys
+}
+
+func usageError(cmd *cobra.Command, err error) {
+	fmt.Println(cmd.UsageString())
+	log.Fatal(err)
 }
 
 func requestMultibeamDownload(request dcdb.MultibeamRequest) {
